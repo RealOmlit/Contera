@@ -820,19 +820,22 @@ function resolveCollisions(pos, radius, height){
   for(const b of collisionBoxes){
     if(pMax.x>b.min.x && pMin.x<b.max.x && pMax.y>b.min.y && pMin.y<b.max.y && pMax.z>b.min.z && pMin.z<b.max.z){
       // compute overlap on each axis, push out along smallest
-      const overlapX1 = pMax.x-b.min.x, overlapX2 = b.max.x-pMin.x;
-      const overlapZ1 = pMax.z-b.min.z, overlapZ2 = b.max.z-pMin.z;
-      const overlapY1 = pMax.y-b.min.y, overlapY2 = b.max.y-pMin.y;
+      const overlapX1 = pMax.x-b.min.x;
+      const overlapX2 = b.max.x-pMin.x;
+      const overlapZ1 = pMax.z-b.min.z;
+      const overlapZ2 = b.max.z-pMin.z;
+      const overlapY1 = pMax.y-b.min.y;
+      const overlapY2 = b.max.y-pMin.y;
       const minX = Math.min(overlapX1, overlapX2);
       const minZ = Math.min(overlapZ1, overlapZ2);
       const minY = Math.min(overlapY1, overlapY2);
       const m = Math.min(minX, minZ, minY);
       if(m===minY){
-        if(overlapY1<overlapY2){ pos.y -= overlapY1 + 0.001; } else { pos.y += overlapY2 + 0.001; }
+        if(overlapY1<overlapY2) pos.y -= overlapY1 + 0.001; else pos.y += overlapY2 + 0.001;
       } else if(m===minX){
-        if(overlapX1<overlapX2){ pos.x -= overlapX1 + 0.001; } else { pos.x += overlapX2 + 0.001; }
+        if(overlapX1<overlapX2) pos.x -= overlapX1 + 0.001; else pos.x += overlapX2 + 0.001;
       } else {
-        if(overlapZ1<overlapZ2){ pos.z -= overlapZ1 + 0.001; } else { pos.z += overlapZ2 + 0.001; }
+        if(overlapZ1<overlapZ2) pos.z -= overlapZ1 + 0.001; else pos.z += overlapZ2 + 0.001;
       }
     }
   }
@@ -860,6 +863,7 @@ function buildViewmodel(weaponKey){
     handle.position.set(0.28,-0.22,-0.15);
     group.add(blade, handle);
     group.userData.barrelTip = new THREE.Vector3(0.28,-0.22,-0.8);
+    group.userData.baseX = 0.28; group.userData.baseY=-0.22; group.userData.baseZ=-0.15;
     return group;
   }
   const bodyLen = w.type==='sniper'?0.9: w.type==='rifle'?0.75: w.type==='shotgun'?0.8: w.type==='smg'?0.55:0.32;
@@ -933,7 +937,7 @@ function resetPlayerAmmoFor(key){
 Player.weapons.forEach(resetPlayerAmmoFor);
 
 // input state
-const Input = { forward:false, back:false, left:false, right:false, shift:false, ctrl:false, jump:false, mouseDown:false, rightDown:false };
+const Input = { forward:false, back:false, left:false, right:false, shift:false, ctrl:false, jump:false, mouseDown:false, rightDown:false, interact:false, mouseHeldSinceDown:false };
 let mouseLocked = false;
 
 // ---------- CAMERA RECOIL / SWAY STATE ----------
@@ -994,11 +998,13 @@ function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 function spawnBots(){
   bots.forEach(b=>scene.remove(b.mesh));
   bots = [];
-  const attSpawn = spawnZones.find(s=>s.team==='ATT').points;
-  const defSpawn = spawnZones.find(s=>s.team==='DEF').points;
+  const attZone = spawnZones.find(s=>s.team==='ATT');
+  const defZone = spawnZones.find(s=>s.team==='DEF');
+  if(!attZone || !defZone) return;
+  const attSpawn = attZone.points;
+  const defSpawn = defZone.points;
   for(let i=1;i<5;i++) bots.push(makeBot('ATT', attSpawn[i].clone()));
   for(let i=0;i<5;i++) bots.push(makeBot('DEF', defSpawn[i].clone()));
-  // one attacker bot carries the device
   const attBots = bots.filter(b=>b.team==='ATT');
   if(attBots.length) attBots[0].hasDevice = true;
 }
@@ -1046,7 +1052,10 @@ function updateBot(bot, dt, playerAlive){
       bot.targetWaypoint = navWaypoints[Math.floor(Math.random()*navWaypoints.length)].clone();
     }
   } else if(bot.state==='OBJECTIVE'){
-    const site = MatchSys.activeSitePush || (bot.team==='ATT'? (Math.random()<0.5?'A':'B') : null);
+    let site = MatchSys.activeSitePush;
+    if(!site && MatchSys.device.planted) site = MatchSys.device.site;
+    if(!site && bot.team==='ATT') site = (Math.random()<0.5?'A':'B');
+    if(!site) site = 'A';
     const target = site==='A'? MapRefs.siteACenter : MapRefs.siteBCenter;
     moveBotToward(bot, new THREE.Vector3(target.x,1.6,target.z), dt, speed*0.75);
   } else if(bot.state==='INVESTIGATE'){
@@ -1190,12 +1199,15 @@ function beginRound(isFirst){
 }
 
 function respawnAllForRound(){
-  const attSpawn = spawnZones.find(s=>s.team==='ATT').points;
-  const defSpawn = spawnZones.find(s=>s.team==='DEF').points;
+  const attZone = spawnZones.find(s=>s.team==='ATT');
+  const defZone = spawnZones.find(s=>s.team==='DEF');
+  if(!attZone || !defZone) return;
+  const attSpawn = attZone.points;
+  const defSpawn = defZone.points;
   const mySpawn = Player.team==='ATT'?attSpawn[0]:defSpawn[0];
   Player.pos.copy(mySpawn); Player.pos.y=1.6;
   Player.vel.set(0,0,0);
-  Player.health=100; Player.armor = Player.armor; Player.alive=true;
+  Player.health=100; Player.armor=0; Player.alive=true;
   if(Game.mode==='bots') spawnBots();
   else bots.forEach(b=>scene.remove(b.mesh)), bots=[];
   bots.forEach(b=>{ b.health=100; b.alive=true; b.mesh.visible=true; b.state='PATROL'; });
@@ -1329,7 +1341,11 @@ function checkRoundEnd(){
   if(MatchSys.phase!=='LIVE') return;
   const attAlive = (Player.team==='ATT'&&Player.alive) || bots.some(b=>b.team==='ATT'&&b.alive);
   const defAlive = (Player.team==='DEF'&&Player.alive) || bots.some(b=>b.team==='DEF'&&b.alive);
-  if(MatchSys.device.planted) return; // handled elsewhere once planted (elimination of defenders still wins for attackers though)
+  if(MatchSys.device.planted){
+    if(!attAlive){ endRound('DEF','elim'); return; }
+    if(!defAlive){ endRound('ATT','elim'); return; }
+    return;
+  }
   if(!attAlive){ endRound('DEF','elim'); return; }
   if(!defAlive){ endRound('ATT','elim'); return; }
 }
@@ -1426,6 +1442,7 @@ const flashPool = [];
 function muzzleFlashAt(pos, dir){
   let f = flashPool.find(p=>!p.active);
   if(!f){
+    if(flashPool.length >= 50) return; // hard cap
     const light = new THREE.PointLight(0xffcc77, 0, 6);
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6), new THREE.MeshBasicMaterial({color:0xffdd99, transparent:true}));
     scene.add(light); scene.add(mesh);
@@ -1447,12 +1464,12 @@ const decalPool = [];
 function spawnImpactDecal(pos, normal){
   let d = decalPool.find(p=>!p.active);
   if(!d){
+    if(decalPool.length >= 120) return; // hard cap to prevent memory leak
     const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.06,8), new THREE.MeshBasicMaterial({color:0x1a1a1a, transparent:true, opacity:0.6}));
     scene.add(mesh);
     d={mesh, active:false, t:0};
     decalPool.push(d);
   }
-  if(decalPool.length>60){} // cap naturally by pool reuse
   d.active=true; d.t=6;
   d.mesh.position.copy(pos).add(normal.clone().multiplyScalar(0.02));
   d.mesh.lookAt(pos.clone().add(normal));
@@ -1466,6 +1483,7 @@ function spawnSparks(pos){
   for(let i=0;i<5;i++){
     let s = sparkPool.find(p=>!p.active);
     if(!s){
+      if(sparkPool.length >= 100) return; // hard cap
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.02,4,4), new THREE.MeshBasicMaterial({color:0xffcc55}));
       scene.add(mesh); s={mesh, active:false, t:0, vel:new THREE.Vector3()};
       sparkPool.push(s);
@@ -1718,14 +1736,17 @@ function updatePlayerMovement(dt){
 
   // collisions: resolve against world boxes (feet-based box)
   const feetPos = Player.pos.clone(); feetPos.y -= Player.eyeHeight;
+  const preCollY = feetPos.y;
   resolveCollisions(feetPos, Player.radius, Player.height);
+  const wasPushedUp = feetPos.y > preCollY + 0.01;
   Player.pos.y = feetPos.y + Player.eyeHeight;
 
-  // ground check
+  // ground check - use collision resolution result if pushed up onto a surface
   const groundY = groundHeightAt(Player.pos.x, Player.pos.z) + Player.eyeHeight;
-  if(Player.pos.y <= groundY+0.02){
+  const effectiveGroundY = wasPushedUp ? Player.pos.y : groundY;
+  if(Player.pos.y <= effectiveGroundY+0.02){
     if(!Player.onGround && Player.vel.y<-4) AudioEng.playLand();
-    Player.pos.y = groundY;
+    Player.pos.y = effectiveGroundY;
     Player.vel.y = 0;
     Player.onGround = true;
   } else {
@@ -1891,16 +1912,16 @@ function purchaseItem(key){
     Player.money-=w.price; Player.armor=100; AudioEng.playUIClick(); refreshBuyMenu(); return;
   }
   if(Player.weapons.includes(key)){
-    // buy ammo top-up instead
     if(w.reserve && Player.reserve[key]<w.reserve){ Player.reserve[key]=w.reserve; AudioEng.playUIClick(); }
     return;
   }
   if(Player.money<w.price) return;
   Player.money-=w.price;
   resetPlayerAmmoFor(key);
-  // replace slot by class
-  if(w.cls==='PISTOLS'){ Player.weapons[Player.weapons.length>1&&WEAPONS[Player.weapons[1]]&&WEAPONS[Player.weapons[1]].cls==='PISTOLS'?1:1]=key; if(Player.weapons.length<2) Player.weapons.push(key); else Player.weapons[Player.weapons.findIndex(k=>WEAPONS[k].type==='pistol')>=0?Player.weapons.findIndex(k=>WEAPONS[k].type==='pistol'):1]=key; }
-  else if(w.cls==='RIFLES'||w.cls==='SMGS'||w.cls==='HEAVY'||w.cls==='SNIPERS'){
+  if(w.cls==='PISTOLS'){
+    const pistolIdx = Player.weapons.findIndex(k=>WEAPONS[k].type==='pistol');
+    if(pistolIdx>=0) Player.weapons[pistolIdx]=key; else Player.weapons.push(key);
+  } else if(['RIFLES','SMGS','HEAVY','SNIPERS'].includes(w.cls)){
     const primaryIdx = Player.weapons.findIndex(k=>['rifle','smg','shotgun','sniper'].includes(WEAPONS[k].type));
     if(primaryIdx>=0) Player.weapons[primaryIdx]=key; else Player.weapons.unshift(key);
   }
@@ -2016,9 +2037,9 @@ document.addEventListener('keydown', e=>{
     case 'Space': Input.jump=true; break;
     case 'KeyR': if(Game.state==='PLAY'||Game.state==='TRAINING') reloadWeapon(); break;
     case 'KeyE': Input.interact=true; break;
-    case 'Digit1': if(Game.state==='PLAY'||Game.state==='TRAINING') switchWeapon(Player.weapons.findIndex(k=>['rifle','smg','shotgun','sniper'].includes(WEAPONS[k].type))>=0?Player.weapons.findIndex(k=>['rifle','smg','shotgun','sniper'].includes(WEAPONS[k].type)):0); break;
-    case 'Digit2': if(Game.state==='PLAY'||Game.state==='TRAINING') switchWeapon(Player.weapons.findIndex(k=>WEAPONS[k].type==='pistol')); break;
-    case 'Digit3': if(Game.state==='PLAY'||Game.state==='TRAINING') switchWeapon(Player.weapons.indexOf('Knife')); break;
+    case 'Digit1': if(Game.state==='PLAY'||Game.state==='TRAINING'){ const idx = Player.weapons.findIndex(k=>['rifle','smg','shotgun','sniper'].includes(WEAPONS[k].type)); if(idx>=0) switchWeapon(idx); } break;
+    case 'Digit2': if(Game.state==='PLAY'||Game.state==='TRAINING'){ const idx = Player.weapons.findIndex(k=>WEAPONS[k].type==='pistol'); if(idx>=0) switchWeapon(idx); } break;
+    case 'Digit3': if(Game.state==='PLAY'||Game.state==='TRAINING'){ const idx = Player.weapons.indexOf('Knife'); if(idx>=0) switchWeapon(idx); } break;
     case 'KeyB': if(Game.state==='PLAY' && MatchSys.phase==='BUY' && nearOwnSpawn()) toggleBuyMenu(); break;
     case 'Tab': if(Game.state==='PLAY'){ e.preventDefault(); document.getElementById('scoreboard').classList.add('show'); updateScoreboard(); } break;
     case 'Escape':
@@ -2195,7 +2216,8 @@ function updateMatchPhase(dt){
       MatchSys.device.timer -= dt;
       document.getElementById('deviceTimer').textContent = Math.max(0,Math.ceil(MatchSys.device.timer));
       document.getElementById('deviceTimer').classList.add('show');
-      if(Math.ceil(MatchSys.device.timer)%1===0 && Math.random()<dt*3) AudioEng.playBeep();
+      const beepTime = Math.ceil(MatchSys.device.timer);
+      if(beepTime<=10 && Math.abs(MatchSys.device.timer - beepTime) < dt) AudioEng.playBeep();
       if(MatchSys.device.timer<=0 && !MatchSys.device.exploded){
         MatchSys.device.exploded=true;
         AudioEng.playExplosion();
